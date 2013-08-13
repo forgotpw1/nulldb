@@ -211,6 +211,10 @@ class ActiveRecord::ConnectionAdapters::NullDBAdapter <
   def add_pk_constraint(*args)
     # NOOP
   end
+  
+  def add_foreign_key(*args)
+    # NOOP
+  end
 
   # Retrieve the table names defined by the schema
   def tables
