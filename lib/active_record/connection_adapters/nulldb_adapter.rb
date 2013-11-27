@@ -94,18 +94,9 @@ class ActiveRecord::ConnectionAdapters::NullDBAdapter <
     end
   end
 
-  class EmptyResult < Array
-    attr_writer :columns
+  class EmptyResult
     def rows
       []
-    end
-
-    def column_types
-      columns.map{|col| col.type}
-    end
-
-    def columns
-      @columns ||= []
     end
   end
 
@@ -128,7 +119,7 @@ class ActiveRecord::ConnectionAdapters::NullDBAdapter <
     @log            = StringIO.new
     @logger         = Logger.new(@log)
     @last_unique_id = 0
-    @tables         = {'schema_info' => new_table_definition(nil)}
+    @tables         = {'schema_info' =>  TableDefinition.new(nil)}
     @indexes        = Hash.new { |hash, key| hash[key] = [] }
     @schema_path    = config.fetch(:schema){ "db/schema.rb" }
     @config         = config.merge(:adapter => :nulldb)
@@ -164,8 +155,7 @@ class ActiveRecord::ConnectionAdapters::NullDBAdapter <
   end
 
   def create_table(table_name, options = {})
-    table_definition = new_table_definition(self, table_name, options.delete(:temporary), options)
-
+    table_definition = ActiveRecord::ConnectionAdapters::TableDefinition.new(self)
     unless options[:id] == false
       table_definition.primary_key(options[:primary_key] || "id")
     end
@@ -192,7 +182,7 @@ class ActiveRecord::ConnectionAdapters::NullDBAdapter <
         index_type = options
       end
 
-      if index_name.length > index_name_length
+      if index_name.length > 64 #mysql character limit for 'index' identifiers 
         raise ArgumentError, "Index name '#{index_name}' on table '#{table_name}' is too long; the limit is #{index_name_length} characters"
       end
       if index_name_exists?(table_name, index_name, false)
@@ -211,9 +201,22 @@ class ActiveRecord::ConnectionAdapters::NullDBAdapter <
   def add_pk_constraint(*args)
     # NOOP
   end
-  
-  def add_foreign_key(*args)
-    # NOOP
+
+  def index_name_exists?(table_name, index_name, default)
+        return default unless respond_to?(:indexes)
+        index_name = index_name.to_s
+        indexes(table_name).detect { |i| i.name == index_name }
+  end
+
+  def quoted_columns_for_index(column_names, options = {})
+    option_strings = Hash[column_names.map {|name| [name, '']}]
+
+    # add index sort order if supported
+    #if supports_index_sort_order?
+    #  option_strings = add_index_sort_order(option_strings, column_names, options)
+    #end
+
+    column_names.map {|name| quote_column_name(name) + option_strings[name]}
   end
 
   # Retrieve the table names defined by the schema
@@ -266,7 +269,7 @@ class ActiveRecord::ConnectionAdapters::NullDBAdapter <
     [].tap do
       self.execution_log << Statement.new(entry_point, statement)
     end
-  end
+  end  
 
   def insert(statement, name = nil, primary_key = nil, object_id = nil, sequence_name = nil, binds = [])
     (object_id || next_unique_id).tap do
@@ -295,20 +298,14 @@ class ActiveRecord::ConnectionAdapters::NullDBAdapter <
     end
   end
 
-  def select_one(statement, name=nil, binds = [])
+  def select_one(statement, name=nil)
     with_entry_point(:select_one) do
       super(statement, name)
     end
   end
 
-  def select_value(statement, name=nil, binds = [])
+  def select_value(statement, name=nil)
     with_entry_point(:select_value) do
-      super(statement, name)
-    end
-  end
-
-  def select_values(statement, name=nil)
-    with_entry_point(:select_values) do
       super(statement, name)
     end
   end
@@ -319,19 +316,13 @@ class ActiveRecord::ConnectionAdapters::NullDBAdapter <
 
   protected
 
-  def select(statement, name = nil, binds = [])
-    EmptyResult.new.tap do |r|
-      r.columns = columns_for(name)
+  def select(statement, name, binds = [])
+    [].tap do
       self.execution_log << Statement.new(entry_point, statement)
     end
   end
 
   private
-
-  def columns_for(table_name)
-    table_def = @tables[table_name]
-    table_def ? table_def.columns : []
-  end
 
   def next_unique_id
     @last_unique_id += 1
@@ -358,17 +349,6 @@ class ActiveRecord::ConnectionAdapters::NullDBAdapter <
       yield
     ensure
       Thread.current[name] = old_value
-    end
-  end
-
-  def new_table_definition(adapter = nil, table_name = nil, is_temporary = nil, options = {})
-    case ::ActiveRecord::VERSION::MAJOR
-    when 4
-      TableDefinition.new(native_database_types, table_name, is_temporary, options)
-    when 2,3
-      TableDefinition.new(adapter)
-    else
-      raise "Unsupported ActiveRecord version #{::ActiveRecord::VERSION::STRING}"
     end
   end
 end
